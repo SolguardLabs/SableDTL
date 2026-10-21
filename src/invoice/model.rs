@@ -113,6 +113,24 @@ impl Invoice {
         terms: PaymentTerms,
         line_items: Vec<LineItem>,
     ) -> SableResult<Self> {
+        let external_ref = external_ref.into();
+        if external_ref.trim().is_empty() {
+            return Err(SableError::InvalidTransition(
+                "invoice requires an external reference".to_string(),
+            ));
+        }
+        if line_items.is_empty()
+            || line_items
+                .iter()
+                .any(|line| line.quantity <= 0 || !line.unit_price.is_positive())
+        {
+            return Err(SableError::InvalidTransition(
+                "invoice requires positive line items".to_string(),
+            ));
+        }
+        let due_day = issue_day
+            .checked_add(terms.net_days)
+            .ok_or(SableError::ArithmeticOverflow)?;
         let subtotal: Money = line_items
             .iter()
             .map(LineItem::net_amount)
@@ -130,9 +148,9 @@ impl Invoice {
             id,
             merchant,
             buyer,
-            external_ref: external_ref.into(),
+            external_ref,
             issue_day,
-            due_day: issue_day + terms.net_days,
+            due_day,
             terms,
             line_items,
             subtotal,
@@ -263,7 +281,7 @@ impl Invoice {
     }
 
     pub fn is_late(&self, day: u32) -> bool {
-        day > self.due_day + self.terms.grace_days && self.has_accounting_balance()
+        day > self.due_day.saturating_add(self.terms.grace_days) && self.has_accounting_balance()
     }
 
     pub fn days_past_due(&self, day: u32) -> u32 {
@@ -297,5 +315,60 @@ impl Invoice {
         } else {
             InvoiceStatus::Issued
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Invoice, LineItem, PaymentTerms};
+    use crate::amount::{Bps, Money};
+    use crate::error::SableError;
+    use crate::ids::{InvoiceId, PartyId};
+
+    fn line() -> LineItem {
+        LineItem::new("SVC-1", "Service", 1, Money::dollars(100), Bps::ZERO)
+    }
+
+    #[test]
+    fn invoice_rejects_invalid_lines_and_reference() {
+        let make = |reference: &str, lines: Vec<LineItem>| {
+            Invoice::new(
+                InvoiceId::from("inv-1"),
+                PartyId::from("merchant"),
+                PartyId::from("buyer"),
+                reference,
+                1,
+                PaymentTerms::net_30(),
+                lines,
+            )
+        };
+        assert!(matches!(
+            make("  ", vec![line()]),
+            Err(SableError::InvalidTransition(_))
+        ));
+        assert!(matches!(
+            make("AR-1", vec![]),
+            Err(SableError::InvalidTransition(_))
+        ));
+        let mut invalid = line();
+        invalid.quantity = 0;
+        assert!(matches!(
+            make("AR-1", vec![invalid]),
+            Err(SableError::InvalidTransition(_))
+        ));
+    }
+
+    #[test]
+    fn invoice_rejects_due_day_overflow() {
+        let result = Invoice::new(
+            InvoiceId::from("inv-1"),
+            PartyId::from("merchant"),
+            PartyId::from("buyer"),
+            "AR-1",
+            u32::MAX,
+            PaymentTerms::net_30(),
+            vec![line()],
+        );
+        assert!(matches!(result, Err(SableError::ArithmeticOverflow)));
     }
 }

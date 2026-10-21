@@ -339,7 +339,7 @@ fn install_parties(
     book.insert(
         Counterparty::new(
             parties.merchant.clone(),
-            "Sable Market Labs Ltd.",
+            "Sable Market Ltd.",
             CounterpartyRole::Merchant,
             accounts.cash.clone(),
             accounts.receivable.clone(),

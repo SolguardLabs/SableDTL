@@ -69,6 +69,28 @@ impl SettlementBook {
         receivable_account: AccountId,
         clearing_account: AccountId,
     ) -> SableResult<()> {
+        let mut candidate_book = self.clone();
+        let mut candidate_ledger = ledger.clone();
+        candidate_book.post_claims_inner(
+            claim_ids,
+            day,
+            &mut candidate_ledger,
+            receivable_account,
+            clearing_account,
+        )?;
+        *self = candidate_book;
+        *ledger = candidate_ledger;
+        Ok(())
+    }
+
+    fn post_claims_inner(
+        &mut self,
+        claim_ids: &[SettlementId],
+        day: u32,
+        ledger: &mut Ledger,
+        receivable_account: AccountId,
+        clearing_account: AccountId,
+    ) -> SableResult<()> {
         for claim_id in claim_ids {
             let claim = self
                 .claims
@@ -160,5 +182,51 @@ impl SettlementBook {
             &claim.invoice_id == invoice_id
                 && matches!(claim.status, ClaimStatus::Prepared | ClaimStatus::Posted)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::amount::{Bps, Money};
+    use crate::fixtures::seeded_state;
+    use crate::ids::SettlementId;
+
+    #[test]
+    fn posting_batch_rolls_back_when_a_later_claim_is_missing() {
+        let mut state = seeded_state().unwrap();
+        state
+            .issue_standard_invoice(
+                state.parties.buyer_alpha.clone(),
+                "AR-atomic-1",
+                1,
+                Money::dollars(100),
+                Bps::ZERO,
+            )
+            .unwrap();
+        state.refresh_settlement();
+        let batch = state.next_batch_id();
+        let mut claims = state.settlement.prepare_due_claims(40, batch).unwrap();
+        assert_eq!(claims.len(), 1);
+        claims.push(SettlementId::from("set-missing"));
+        let journal_len = state.ledger.journal().len();
+
+        assert!(
+            state
+                .settlement
+                .post_claims(
+                    &claims,
+                    40,
+                    &mut state.ledger,
+                    state.accounts.receivable,
+                    state.accounts.clearing,
+                )
+                .is_err()
+        );
+        assert_eq!(state.ledger.journal().len(), journal_len);
+        assert_eq!(state.settlement.posted_count(), 0);
+        assert_eq!(
+            state.settlement.get(&claims[0]).unwrap().status,
+            crate::settlement::ClaimStatus::Prepared
+        );
     }
 }

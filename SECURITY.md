@@ -8,6 +8,20 @@ binario. El motor protege las invariantes economicas internas con tipos fuertes,
 journal balanceado, politicas de ajuste, digests deterministas y tests de
 escenarios.
 
+```mermaid
+flowchart LR
+    O[Operador autenticado] --> A[Admisión y secuenciación]
+    A --> I[Facturas y receipts]
+    A --> M[Ajustes con aprobación]
+    I --> C[Estado candidato]
+    M --> C
+    C --> J[Diario y claims]
+    J --> V{Validación contable}
+    V -->|correcta| P[Commit]
+    V -->|fallo| R[Rechazo + auditoría]
+    DB[Persistencia externa] -.-> P
+```
+
 ## Invariantes Esperadas
 
 - Todo journal debe tener debitos y creditos iguales.
@@ -20,6 +34,10 @@ escenarios.
 - Los reportes de escenario deben producir digests reproducibles.
 - Los claims de settlement deben mantener estado explicito: prepared, posted,
   settled, frozen o cancelled.
+- Un lote de claims rechazado no puede dejar asientos ni estados `Posted`
+  parciales en memoria.
+- Las facturas emitidas requieren referencia externa, líneas positivas y
+  vencimiento representable.
 
 ## Validaciones Automatizadas
 
@@ -65,6 +83,11 @@ Fuera de alcance:
 - Firmas de operador o autenticacion externa.
 - Persistencia en base de datos.
 - Redes de pago reales.
+
+Un trial balance balanceado prueba igualdad contable agregada. No valida por
+sí solo la elegibilidad de cada contraparte ni la autorización comercial de
+cada claim. El integrador debe realizar esas revisiones por referencia,
+factura y lote antes de transmitir pagos fuera del motor.
 
 ## Reportes Internos
 
